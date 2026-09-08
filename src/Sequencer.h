@@ -49,6 +49,10 @@ public:
   bool stepChanged();
   void updateStepLEDs();
 
+  // Selected step for encoder editing (0-15)
+  uint8_t getSelectedStep() const { return selectedStep_; }
+  void setSelectedStep(uint8_t step) { if (step < 16) selectedStep_ = step; }
+
   // ChordTimeline integration
   void setChordTimeline(ChordTimeline* tl) { timeline_ = tl; }
   void syncFromTimeline();  // resolve timeline → steps_[]
@@ -69,6 +73,7 @@ private:
   int8_t pendingLongPressStep_;
   unsigned long pendingLongPressStart_;
   bool stepChangedFlag_;
+  uint8_t selectedStep_;
   ChordTimeline* timeline_;  // optional, for chord-degree-based playback
 
   void advanceStep();

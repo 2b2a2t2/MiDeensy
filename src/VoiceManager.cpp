@@ -10,6 +10,8 @@ void VoiceManager::begin() {
     slots_[i].role = ROLE_NONE;
     slots_[i].enabled = true;
     slots_[i].locked = false;
+    slots_[i].octaveOffset = 0;
+    slots_[i].velocity = 100;
   }
   // Default role assignments for first 5 slots
   slots_[0].role = ROLE_DRUMS;
@@ -42,6 +44,28 @@ void VoiceManager::setSlotLocked(uint8_t idx, bool locked) {
   if (idx < 16) {
     slots_[idx].locked = locked;
   }
+}
+
+void VoiceManager::setSlotOctaveOffset(uint8_t idx, int8_t offset) {
+  if (idx < 16) {
+    slots_[idx].octaveOffset = offset;
+  }
+}
+
+void VoiceManager::setSlotVelocity(uint8_t idx, uint8_t velocity) {
+  if (idx < 16) {
+    slots_[idx].velocity = velocity;
+  }
+}
+
+int8_t VoiceManager::getSlotOctaveOffset(uint8_t idx) const {
+  if (idx < 16) return slots_[idx].octaveOffset;
+  return 0;
+}
+
+uint8_t VoiceManager::getSlotVelocity(uint8_t idx) const {
+  if (idx < 16) return slots_[idx].velocity;
+  return 100;
 }
 
 uint8_t VoiceManager::getActiveChannel() const {

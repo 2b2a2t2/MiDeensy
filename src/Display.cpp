@@ -8,6 +8,7 @@ extern uint8_t selectedSlot;
 extern uint8_t currentKey;
 extern ScaleType currentScale;
 extern VoiceManager voiceManager;
+extern struct SeqEncoderParams seqParams;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2Display(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
 
@@ -103,40 +104,68 @@ void MyU8G2_DisplayInterface::displaySequencerMode() {
   setTextColor(WHITE);
 
   setCursor(0, 22);
-  print("SEQ: ");
+  print("SEQ ");
   switch (seqFunction) {
     case SEQ_THEME:   print("THEME"); break;
-    case SEQ_HARMONY: print("HARMONY"); break;
+    case SEQ_HARMONY: print("HARM"); break;
     case SEQ_RHYTHM:  print("RHYTHM"); break;
     case SEQ_VOICE:   print("VOICE"); break;
     default:          print("Select F1-F4"); break;
   }
-
-  // Show slot and channel info
-  setCursor(0, 32);
-  print("Slot:");
+  print(" S");
   print(selectedSlot + 1);
-  print("  Ch:");
-  print(voiceManager.getActiveChannel());
 
-  // Show role
-  setCursor(0, 42);
-  print("Role: ");
-  switch (voiceManager.getActiveRole()) {
-    case ROLE_DRUMS: print("Drums"); break;
-    case ROLE_BASS:  print("Bass"); break;
-    case ROLE_PAD:   print("Pad"); break;
-    case ROLE_ARP:   print("Arp"); break;
-    case ROLE_LEAD:  print("Lead"); break;
-    default:         print("None"); break;
+  setCursor(0, 32);
+  switch (seqFunction) {
+    case SEQ_HARMONY:
+      print("Step:");
+      print(sequencer.getSelectedStep());
+      print(" Dur:");
+      print(seqParams.duration);
+      print(" Inv:");
+      print(seqParams.inversion);
+      break;
+    case SEQ_RHYTHM:
+      print("Density:");
+      print(seqParams.density);
+      print(" Sw:");
+      print(seqParams.swing);
+      break;
+    case SEQ_THEME:
+      print("Energy:");
+      print(seqParams.energy);
+      print(" Tens:");
+      print(seqParams.themeTension);
+      break;
+    case SEQ_VOICE:
+      print("Oct:");
+      print(seqParams.octaveOffset);
+      print(" Vel:");
+      print(seqParams.velocity);
+      break;
+    default:
+      print("Ch:");
+      print(voiceManager.getActiveChannel());
+      break;
   }
 
-  // Show key/scale
-  setCursor(0, 52);
-  print("Key:");
-  print(currentKey);
-  print(" Scale:");
-  print(currentScale);
+  setCursor(0, 42);
+  if (seqFunction == SEQ_VOICE) {
+    print("Role: ");
+    switch (voiceManager.getActiveRole()) {
+      case ROLE_DRUMS: print("Drums"); break;
+      case ROLE_BASS:  print("Bass"); break;
+      case ROLE_PAD:   print("Pad"); break;
+      case ROLE_ARP:   print("Arp"); break;
+      case ROLE_LEAD:  print("Lead"); break;
+      default:         print("None"); break;
+    }
+  } else {
+    print("Key:");
+    print(currentKey);
+    print(" Scale:");
+    print(currentScale);
+  }
 
   display();
 }

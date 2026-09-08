@@ -8,7 +8,7 @@ Sequencer::Sequencer()
     lastNote_(60), lastVelocity_(127), hasNote_(false),
     chordEditStep_(-1), playingMask_(0),
     pendingLongPressStep_(-1), pendingLongPressStart_(0),
-    stepChangedFlag_(false), timeline_(nullptr) {
+    stepChangedFlag_(false), selectedStep_(0), timeline_(nullptr) {
   clearPattern();
 }
 

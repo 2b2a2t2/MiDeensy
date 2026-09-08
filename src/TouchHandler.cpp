@@ -11,6 +11,7 @@ extern uint8_t currentKey;
 extern ScaleType currentScale;
 extern ChordTimeline chordTimeline;
 extern VoiceManager voiceManager;
+extern struct SeqEncoderParams seqParams;
 
 // 16 PADS
 ButtonMap padButtons[] = {
@@ -113,11 +114,13 @@ static void handlePadButton(ButtonMap* button, bool pressed) {
       }
 
       stepToggledOnPress = false;
+      sequencer.setSelectedStep(padIndex);  // select step for encoder editing
       if (sequencer.isStepActive(padIndex)) {
         // Step is ON: start long-press timer
         sequencer.setPendingLongPress(padIndex);
       } else {
         // Step is OFF: turn on with last held chord
+        sequencer.setSelectedStep(padIndex);  // select step for encoder editing
         sequencer.toggleStep(padIndex, lastHeldChord);
         stepToggledOnPress = true;
       }
@@ -210,8 +213,8 @@ static void handleControlButton(ButtonMap* button, bool pressed) {
           HarmonyParams params;
           params.key = currentKey;
           params.scale = currentScale;
-          params.density = 4;  // default 4 chords per loop
-          params.tension = 64;
+          params.density = seqParams.density;
+          params.tension = seqParams.tension;
           params.variation = 64;
           params.loopLength = 16;
           harmonyEngine.generate(chordTimeline, params);
@@ -226,9 +229,9 @@ static void handleControlButton(ButtonMap* button, bool pressed) {
           HarmonyParams params;
           params.key = currentKey;
           params.scale = currentScale;
-          params.density = 4;
-          params.tension = 64;
-          params.variation = 64;
+          params.density = seqParams.density;
+          params.tension = seqParams.tension;
+          params.variation = seqParams.themeTension;
           params.loopLength = 16;
           HarmonyLock locks;
           locks.progression = false;

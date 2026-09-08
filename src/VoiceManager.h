@@ -7,6 +7,8 @@ struct SeqSlot {
   VoiceRole role;         // DRUMS, BASS, PAD, ARP, LEAD, NONE
   bool enabled;
   bool locked;            // prevents EVOLVE from changing this slot's content
+  int8_t octaveOffset;    // -12 to +12 semitones
+  uint8_t velocity;       // 0-127
 };
 
 class VoiceManager {
@@ -22,6 +24,10 @@ public:
   void setSlotRole(uint8_t idx, VoiceRole role);
   void setSlotEnabled(uint8_t idx, bool enabled);
   void setSlotLocked(uint8_t idx, bool locked);
+  void setSlotOctaveOffset(uint8_t idx, int8_t offset);
+  void setSlotVelocity(uint8_t idx, uint8_t velocity);
+  int8_t getSlotOctaveOffset(uint8_t idx) const;
+  uint8_t getSlotVelocity(uint8_t idx) const;
 
   // Active slot (selected via SEQ+PAD)
   uint8_t getActiveSlot() const { return activeSlot_; }

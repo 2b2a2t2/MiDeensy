@@ -54,20 +54,40 @@ bool encoderMoved = false;
 uint16_t encoderBaseline[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 bool encoderPickedUp[8] = { false, false, false, false, false, false, false, false };
 
-// SEQ contextual encoder parameters
-struct SeqEncoderParams {
-  uint8_t duration;      // enc0: 1-16 steps
-  uint8_t inversion;     // enc1: 0-2
-  uint8_t tension;       // enc2: 0-127
-  uint8_t extensions;    // enc3: bitmask
-  uint8_t density;       // enc0 (RHYTHM): chords per loop
-  uint8_t swing;         // enc1 (RHYTHM): 0-127
-  uint8_t energy;        // enc0 (THEME): 0-127
-  uint8_t themeTension;  // enc1 (THEME): 0-127
-  uint8_t octaveOffset;  // enc0 (VOICE): -12 to +12 semitones
-  uint8_t velocity;      // enc1 (VOICE): 0-127
-};
+// SEQ contextual encoder parameters (struct defined in Globals.h)
 SeqEncoderParams seqParams = { 8, 0, 0, 0, 4, 64, 64, 64, 0, 100 };
+
+// ==================== HELPERS ====================
+
+// Get or create a ChordEvent at the given timeline step.
+// If no event exists, creates one with DEGREE_1, quality AUTO, duration 4.
+ChordEvent getOrCreateEventAtStep(uint16_t step) {
+  const ChordEvent* existing = chordTimeline.getEventAtStep(step);
+  if (existing) {
+    ChordEvent copy = *existing;
+    return copy;
+  }
+  // No event at this step — create a default one
+  ChordEvent evt;
+  evt.active = true;
+  evt.startStep = step;
+  evt.duration = 4;
+  evt.degree = DEGREE_1;
+  evt.quality = QUALITY_AUTO;
+  evt.inversion = 0;
+  evt.extensions = 0;
+  evt.tension = 0;
+  evt.velocity = 100;
+  return evt;
+}
+
+// Apply a modified ChordEvent back to the timeline (remove old, add new) and sync
+void applyChordEvent(const ChordEvent& evt) {
+  // Remove any existing event that overlaps this start step
+  chordTimeline.removeEvent(evt.startStep);
+  chordTimeline.addEvent(evt);
+  sequencer.syncFromTimeline();
+}
 
 // ==================== ENCODERS ====================
 
@@ -231,37 +251,52 @@ void loop() {
 
   // Context-sensitive encoder routing in BANK_SEQ
   if (currentBankMode == BANK_SEQ) {
+    uint8_t selStep = sequencer.getSelectedStep();
+
     switch (seqFunction) {
-      case SEQ_HARMONY:
-        // enc0 → duration (1-16)
+      case SEQ_HARMONY: {
+        // enc0 → duration, enc1 → inversion, enc2 → tension, enc3 → extensions
+        // These modify the ChordEvent at the selected step
+        bool changed = false;
+        ChordEvent evt = getOrCreateEventAtStep(selStep);
+
         if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
           encoderPickedUp[0] = true;
-          seqParams.duration = map(currentValues[0], 0, 127, 1, 16);
+          uint8_t newDur = map(currentValues[0], 0, 127, 1, 16);
+          if (evt.duration != newDur) { evt.duration = newDur; changed = true; }
         }
-        // enc1 → inversion (0-2)
         if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
           encoderPickedUp[1] = true;
-          seqParams.inversion = map(currentValues[1], 0, 127, 0, 2);
+          uint8_t newInv = map(currentValues[1], 0, 127, 0, 2);
+          if (evt.inversion != newInv) { evt.inversion = newInv; changed = true; }
         }
-        // enc2 → tension (0-127)
         if (encoderPickedUp[2] || currentValues[2] != encoderBaseline[2]) {
           encoderPickedUp[2] = true;
-          seqParams.tension = currentValues[2];
+          if (evt.tension != currentValues[2]) { evt.tension = currentValues[2]; changed = true; }
         }
-        // enc3 → extensions (bitmask)
         if (encoderPickedUp[3] || currentValues[3] != encoderBaseline[3]) {
           encoderPickedUp[3] = true;
-          seqParams.extensions = map(currentValues[3], 0, 127, 0, 15);
+          uint8_t newExt = map(currentValues[3], 0, 127, 0, 15);
+          if (evt.extensions != newExt) { evt.extensions = newExt; changed = true; }
+        }
+
+        if (changed) {
+          applyChordEvent(evt);
+          seqParams.duration = evt.duration;
+          seqParams.inversion = evt.inversion;
+          seqParams.tension = evt.tension;
+          seqParams.extensions = evt.extensions;
         }
         break;
+      }
 
       case SEQ_RHYTHM:
-        // enc0 → density (1-16)
+        // enc0 → density (global generation parameter)
         if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
           encoderPickedUp[0] = true;
           seqParams.density = map(currentValues[0], 0, 127, 1, 16);
         }
-        // enc1 → swing (0-127)
+        // enc1 → swing (stored for future rhythm engine)
         if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
           encoderPickedUp[1] = true;
           seqParams.swing = currentValues[1];
@@ -269,36 +304,45 @@ void loop() {
         break;
 
       case SEQ_THEME:
-        // enc0 → energy (0-127)
+        // enc0 → energy, enc1 → themeTension (feed into HarmonyParams for NEW/EVOLVE)
         if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
           encoderPickedUp[0] = true;
           seqParams.energy = currentValues[0];
         }
-        // enc1 → tension (0-127)
         if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
           encoderPickedUp[1] = true;
           seqParams.themeTension = currentValues[1];
         }
         break;
 
-      case SEQ_VOICE:
-        // enc0 → octave offset (-12 to +12)
+      case SEQ_VOICE: {
+        // enc0 → octave offset, enc1 → velocity (per-slot via VoiceManager)
+        bool changed = false;
         if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
           encoderPickedUp[0] = true;
-          seqParams.octaveOffset = map(currentValues[0], 0, 127, -12, 12);
+          int8_t newOct = map(currentValues[0], 0, 127, -12, 12);
+          if (seqParams.octaveOffset != newOct) {
+            seqParams.octaveOffset = newOct;
+            voiceManager.setSlotOctaveOffset(selectedSlot, newOct);
+            changed = true;
+          }
         }
-        // enc1 → velocity (0-127)
         if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
           encoderPickedUp[1] = true;
-          seqParams.velocity = currentValues[1];
+          if (seqParams.velocity != currentValues[1]) {
+            seqParams.velocity = currentValues[1];
+            voiceManager.setSlotVelocity(selectedSlot, currentValues[1]);
+            changed = true;
+          }
         }
+        (void)changed;
         break;
+      }
 
       case SEQ_NONE:
       default:
         break;
     }
-    // In BANK_SEQ with no function selected, encoders do nothing contextual
   }
 
   // Encoder 1 controls keyboard octave (only in KEY mode, not SEQ or ENC)

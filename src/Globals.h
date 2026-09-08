@@ -118,3 +118,17 @@ extern uint8_t selectedSlot;
 extern SeqFunction seqFunction;
 extern uint8_t currentKey;       // root MIDI note (0-11), default 60 (C)
 extern ScaleType currentScale;   // current scale type, default MAJOR
+
+// SEQ encoder parameters (updated by encoders, consumed by generation/playback)
+struct SeqEncoderParams {
+  uint8_t duration;      // enc0: 1-16 steps
+  uint8_t inversion;     // enc1: 0-2
+  uint8_t tension;       // enc2: 0-127
+  uint8_t extensions;    // enc3: bitmask
+  uint8_t density;       // enc0 (RHYTHM): chords per loop
+  uint8_t swing;         // enc1 (RHYTHM): 0-127
+  uint8_t energy;        // enc0 (THEME): 0-127
+  uint8_t themeTension;  // enc1 (THEME): 0-127
+  int8_t octaveOffset;   // enc0 (VOICE): -12 to +12 semitones
+  uint8_t velocity;      // enc1 (VOICE): 0-127
+};

@@ -20,7 +20,7 @@ void MyU8G2_DisplayInterface::drawBackground() {
   setTextColor(WHITE);
 
   setCursor(0, 12);
-  if (lastActiveMode == BANK_SEQ) {
+  if (currentBankMode == BANK_SEQ) {
     print("Keys:");
     setCursor(30, 12);
     print("OCT:");
@@ -79,7 +79,7 @@ void MyU8G2_DisplayInterface::displayNormalMode() {
   setTextSize(1);
   setTextColor(WHITE);
 
-  if (lastActiveMode == BANK_ENC || lastActiveMode == BANK_SEQ) {
+  if (currentBankMode == BANK_ENC || currentBankMode == BANK_SEQ) {
     return;
   }
 
@@ -211,7 +211,7 @@ void EncoderDisplayElement::draw() {
 }
 
 bool EncoderDisplayElement::getDirty() const {
-  return lastActiveMode == BANK_ENC;
+  return currentBankMode == BANK_ENC;
 }
 
 EncoderDisplayElement encDisplay{ display };

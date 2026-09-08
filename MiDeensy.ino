@@ -59,15 +59,15 @@ SeqEncoderParams seqParams = { 8, 0, 0, 0, 4, 64, 64, 64, 0, 100 };
 
 // ==================== HELPERS ====================
 
-// Get or create a ChordEvent at the given timeline step.
-// If no event exists, creates one with DEGREE_1, quality AUTO, duration 4.
-ChordEvent getOrCreateEventAtStep(uint16_t step) {
-  const ChordEvent* existing = chordTimeline.getEventAtStep(step);
+// Get or create a ChordEvent starting exactly at the given step.
+// If no event starts at that step, creates one with DEGREE_1, quality AUTO, duration 4.
+ChordEvent getOrCreateEventStartingAtStep(uint16_t step) {
+  const ChordEvent* existing = chordTimeline.getEventStartingAtStep(step);
   if (existing) {
     ChordEvent copy = *existing;
     return copy;
   }
-  // No event at this step — create a default one
+  // No event starts here — create a default one
   ChordEvent evt;
   evt.active = true;
   evt.startStep = step;
@@ -81,11 +81,12 @@ ChordEvent getOrCreateEventAtStep(uint16_t step) {
   return evt;
 }
 
-// Apply a modified ChordEvent back to the timeline (remove old, add new) and sync
+// Apply a modified ChordEvent back to the timeline and sync to sequencer.
+// Uses updateEvent if an event exists at startStep, otherwise addEvent.
 void applyChordEvent(const ChordEvent& evt) {
-  // Remove any existing event that overlaps this start step
-  chordTimeline.removeEvent(evt.startStep);
-  chordTimeline.addEvent(evt);
+  if (!chordTimeline.updateEvent(evt.startStep, evt)) {
+    chordTimeline.addEvent(evt);
+  }
   sequencer.syncFromTimeline();
 }
 
@@ -243,6 +244,17 @@ void loop() {
       encoderBaseline[i] = currentValues[i];
       encoderPickedUp[i] = false;
     }
+    // Initialize seqParams from the selected step's timeline event
+    if (seqFunction == SEQ_HARMONY) {
+      uint8_t selStep = sequencer.getSelectedStep();
+      const ChordEvent* evt = chordTimeline.getEventStartingAtStep(selStep);
+      if (evt) {
+        seqParams.duration = evt->duration;
+        seqParams.inversion = evt->inversion;
+        seqParams.tension = evt->tension;
+        seqParams.extensions = evt->extensions;
+      }
+    }
     lastSeqFunction = seqFunction;
   }
   if (currentBankMode != BANK_SEQ) {
@@ -256,9 +268,9 @@ void loop() {
     switch (seqFunction) {
       case SEQ_HARMONY: {
         // enc0 → duration, enc1 → inversion, enc2 → tension, enc3 → extensions
-        // These modify the ChordEvent at the selected step
+        // These modify the ChordEvent whose startStep == selectedStep
         bool changed = false;
-        ChordEvent evt = getOrCreateEventAtStep(selStep);
+        ChordEvent evt = getOrCreateEventStartingAtStep(selStep);
 
         if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
           encoderPickedUp[0] = true;

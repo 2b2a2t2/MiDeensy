@@ -84,6 +84,27 @@ bool ChordTimeline::removeEvent(uint16_t step) {
   return false;
 }
 
+bool ChordTimeline::updateEvent(uint16_t startStep, const ChordEvent& event) {
+  for (uint16_t i = 0; i < MAX_THEME_STEPS; i++) {
+    if (events_[i].active && events_[i].startStep == startStep) {
+      events_[i] = event;
+      events_[i].active = true;
+      events_[i].startStep = startStep;
+      return true;
+    }
+  }
+  return false;
+}
+
+const ChordEvent* ChordTimeline::getEventStartingAtStep(uint16_t step) const {
+  for (uint16_t i = 0; i < MAX_THEME_STEPS; i++) {
+    if (events_[i].active && events_[i].startStep == step) {
+      return &events_[i];
+    }
+  }
+  return nullptr;
+}
+
 const ChordEvent* ChordTimeline::getEventAtStep(uint16_t step) const {
   if (step >= loopLength_) step = step % loopLength_;
 

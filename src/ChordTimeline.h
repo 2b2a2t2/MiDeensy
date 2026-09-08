@@ -34,7 +34,9 @@ public:
   void clear();
   bool addEvent(const ChordEvent& evt);
   bool removeEvent(uint16_t step);
+  bool updateEvent(uint16_t startStep, const ChordEvent& event);
   const ChordEvent* getEventAtStep(uint16_t step) const;
+  const ChordEvent* getEventStartingAtStep(uint16_t step) const;
   const ChordEvent* getEventByIndex(uint8_t idx) const;
   uint8_t getEventCount() const { return eventCount_; }
 

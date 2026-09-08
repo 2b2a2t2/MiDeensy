@@ -12,6 +12,9 @@ extern VoiceManager voiceManager;
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2Display(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
 
 void MyU8G2_DisplayInterface::drawBackground() {
+  // Clear header area before redrawing to prevent leftover text from other modes
+  fillRect(0, 0, 128, 16, BLACK);
+
   setTextSize(1);
   setTextColor(WHITE);
 

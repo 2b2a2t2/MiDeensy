@@ -47,7 +47,7 @@ bool modeButtonHeld = false;
 BankMode lastActiveMode = BANK_NONE;
 
 uint16_t lastEncoderValues[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-uint16_t initialEnc1Value = 0;  // captured once at boot
+int16_t initialEnc1Value = 0;  // captured once at boot
 bool encoderMoved = false;
 
 // Encoder pickup: baseline values captured on context entry
@@ -71,14 +71,37 @@ SeqEncoderParams seqParams = { 8, 0, 0, 0, 4, 64, 64, 64, 0, 100 };
 
 // ==================== ENCODERS ====================
 
-Bankable::CCAbsoluteEncoder<16> enc0{ { bankEnc, BankType::ChangeChannel }, { 40, 39 }, { 74, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc1{ { bankEnc, BankType::ChangeChannel }, { 36, 35 }, { 71, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc2{ { bankEnc, BankType::ChangeChannel }, { 34, 33 }, { 75, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc3{ { bankEnc, BankType::ChangeChannel }, { 31, 32 }, { 76, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc4{ { bankEnc, BankType::ChangeChannel }, { 38, 37 }, { 91, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc5{ { bankEnc, BankType::ChangeChannel }, { 26, 25 }, { 92, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc6{ { bankEnc, BankType::ChangeChannel }, { 27, 28 }, { 94, Channel_1 }, 7 };
-Bankable::CCAbsoluteEncoder<16> enc7{ { bankEnc, BankType::ChangeChannel }, { 29, 30 }, { 7, Channel_1 }, 7 };
+// Gate flag: encoders only send CC when this is true (BANK_ENC mode)
+bool encoderCCGate = false;
+
+// Custom sender that wraps ContinuousCCSender with a gate flag
+struct GatedCCSender {
+  void send(uint8_t value, MIDIAddress address) {
+    if (encoderCCGate)
+      Control_Surface.sendControlChange(address, value);
+  }
+  constexpr static uint8_t precision() { return 7; }
+};
+
+// Physical encoder hardware — AHEncoder objects (one per encoder)
+AHEncoder ahe0{40, 39}, ahe1{36, 35}, ahe2{34, 33}, ahe3{31, 32};
+AHEncoder ahe4{38, 37}, ahe5{26, 25}, ahe6{27, 28}, ahe7{29, 30};
+
+// Borrowed encoders: always track position, but CC output gated by encoderCCGate
+cs::OutputBankConfig<BankType::ChangeChannel> encBankCfg{bankEnc, BankType::ChangeChannel};
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc0{ cs::Bankable::SingleAddress(encBankCfg, {74, Channel_1}), ahe0, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc1{ cs::Bankable::SingleAddress(encBankCfg, {71, Channel_1}), ahe1, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc2{ cs::Bankable::SingleAddress(encBankCfg, {75, Channel_1}), ahe2, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc3{ cs::Bankable::SingleAddress(encBankCfg, {76, Channel_1}), ahe3, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc4{ cs::Bankable::SingleAddress(encBankCfg, {91, Channel_1}), ahe4, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc5{ cs::Bankable::SingleAddress(encBankCfg, {92, Channel_1}), ahe5, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc6{ cs::Bankable::SingleAddress(encBankCfg, {94, Channel_1}), ahe6, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc7{ cs::Bankable::SingleAddress(encBankCfg, {7, Channel_1}), ahe7, 7, 4, {} };
+
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender>* midiEncoders[8] = {
+  &midiEnc0, &midiEnc1, &midiEnc2, &midiEnc3,
+  &midiEnc4, &midiEnc5, &midiEnc6, &midiEnc7
+};
 
 // ==================== TOUCH SENSOR ====================
 
@@ -132,7 +155,7 @@ void setup() {
   Serial.println("====================\n");
 
   // Capture initial encoder value so default octave sticks on boot
-  initialEnc1Value = enc1.getValue();
+  initialEnc1Value = midiEncoders[1]->getValue();
 }
 
 // ==================== LOOP ====================
@@ -150,7 +173,11 @@ void loop() {
     }
   }
 
+  // Set encoder CC gate BEFORE loop: encoders send CC during Control_Surface.loop()
+  encoderCCGate = (currentBankMode == BANK_ENC);
+
   Control_Surface.loop();
+
   gestureHelper.update();
 
   sequencer.update();
@@ -183,14 +210,11 @@ void loop() {
     }
   }
 
-  // Update encoders
-  enc0.update(); enc1.update(); enc2.update(); enc3.update();
-  enc4.update(); enc5.update(); enc6.update(); enc7.update();
-
-  uint16_t currentValues[8] = {
-    enc0.getValue(), enc1.getValue(), enc2.getValue(), enc3.getValue(),
-    enc4.getValue(), enc5.getValue(), enc6.getValue(), enc7.getValue()
-  };
+  // Read encoder values (always updated by Control_Surface.loop())
+  uint16_t currentValues[8];
+  for (int i = 0; i < 8; i++) {
+    currentValues[i] = midiEncoders[i]->getValue();
+  }
 
   // Capture baseline when entering a new SEQ context
   static SeqFunction lastSeqFunction = SEQ_NONE;
@@ -277,11 +301,11 @@ void loop() {
     // In BANK_SEQ with no function selected, encoders do nothing contextual
   }
 
-  // Encoder 1 controls keyboard octave (only when NOT in BANK_SEQ)
-  if (currentBankMode != BANK_SEQ) {
-    int8_t newOctave = map(enc1.getValue(), 0, 127, 0, 7);
+  // Encoder 1 controls keyboard octave (only in KEY mode, not SEQ or ENC)
+  if (currentBankMode != BANK_SEQ && currentBankMode != BANK_ENC) {
+    int8_t newOctave = map(midiEncoders[1]->getValue(), 0, 127, 0, 7);
     if (!encoderMoved) {
-      if (enc1.getValue() != initialEnc1Value) {
+      if (midiEncoders[1]->getValue() != initialEnc1Value) {
         encoderMoved = true;
       }
     }

@@ -9,6 +9,19 @@ extern uint8_t currentKey;
 extern ScaleType currentScale;
 extern VoiceManager voiceManager;
 extern struct SeqEncoderParams seqParams;
+extern KeyLayer currentKeyLayer;
+extern EncLayer currentEncLayer;
+extern uint16_t timelineWindowOffset;
+extern uint16_t keyEditStep;
+extern bool noteVsChord;
+extern uint8_t globalVelocity;
+extern ChordTimeline chordTimeline;
+extern const uint8_t encPrimaryCC[8];
+extern const uint8_t encExtendedCC[8];
+
+// Forward declarations for helper functions
+const char* chordDegreeToString(uint16_t step);
+const char* chordQualityToString(uint16_t step);
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2Display(U8G2_R0, U8X8_PIN_NONE, SCL, SDA);
 
@@ -37,6 +50,26 @@ void MyU8G2_DisplayInterface::drawBackground() {
     setCursor(95, 12);
     print("S");
     print(selectedSlot + 1);
+  } else if (currentBankMode == BANK_KEYS) {
+    print("Keys:");
+    setCursor(30, 12);
+    print("OCT:");
+    print(keyboardOctave);
+    setCursor(60, 12);
+    print(currentKeyLayer == KEY_EXTENDED ? "KEY+" : "KEY");
+    setCursor(95, 12);
+    print("S");
+    print(selectedSlot + 1);
+  } else if (currentBankMode == BANK_ENC) {
+    print("Keys:");
+    setCursor(30, 12);
+    print("OCT:");
+    print(keyboardOctave);
+    setCursor(60, 12);
+    print(currentEncLayer == ENC_EXTENDED ? "ENC+" : "ENC");
+    setCursor(95, 12);
+    print("B");
+    print(bankEnc.getSelection() + 1);
   } else {
     print("Keys:");
     setCursor(40, 12);
@@ -79,7 +112,7 @@ void MyU8G2_DisplayInterface::displayNormalMode() {
   setTextSize(1);
   setTextColor(WHITE);
 
-  if (currentBankMode == BANK_ENC || currentBankMode == BANK_SEQ) {
+  if (currentBankMode == BANK_ENC || currentBankMode == BANK_SEQ || currentBankMode == BANK_KEYS) {
     return;
   }
 
@@ -96,6 +129,99 @@ void MyU8G2_DisplayInterface::displayNormalMode() {
   print("Hold KEY/ENC for banks");
 
   display();
+}
+
+void MyU8G2_DisplayInterface::displayKeyMode() {
+  fillRect(0, 17, 128, 47, BLACK);
+  setTextSize(1);
+  setTextColor(WHITE);
+
+  setCursor(0, 22);
+  print("KEY PRIMARY");
+  setCursor(80, 22);
+  print("Key:");
+  print(currentKey);
+  print(" ");
+  print(currentScale);
+
+  setCursor(0, 32);
+  print("KeyEditStep:");
+  print(keyEditStep);
+  print(" Deg:");
+  print(chordDegreeToString(keyEditStep));
+  print(" Qual:");
+  print(chordQualityToString(keyEditStep));
+
+  setCursor(0, 42);
+  print("Note/Chord:");
+  print(noteVsChord ? "Chord" : "Note");
+  print(" Vel:");
+  print(globalVelocity);
+  print(" Slot:");
+  print(selectedSlot + 1);
+  print(" Oct:");
+  print(voiceManager.getSlotOctaveOffset(selectedSlot));
+
+  display();
+}
+
+void MyU8G2_DisplayInterface::displayKeyExtendedMode() {
+  fillRect(0, 17, 128, 47, BLACK);
+  setTextSize(1);
+  setTextColor(WHITE);
+
+  setCursor(0, 22);
+  print("KEY EXTENDED");
+  setCursor(80, 22);
+  print("Oct:");
+  print(keyboardOctave);
+  print(" Bank:");
+  print(bankKeys.getSelection() + 1);
+
+  setCursor(0, 32);
+  print("Slot Oct:");
+  print(voiceManager.getSlotOctaveOffset(selectedSlot));
+  print(" Vel:");
+  print(voiceManager.getSlotVelocity(selectedSlot));
+
+  setCursor(0, 42);
+  print("LoopLen:");
+  print(chordTimeline.getLoopLength());
+  print(" Slot:");
+  print(selectedSlot + 1);
+
+  display();
+}
+
+const char* chordDegreeToString(uint16_t step) {
+  const ChordEvent* evt = chordTimeline.getEventStartingAtStep(step);
+  if (!evt) return "--";
+  switch (evt->degree) {
+    case DEGREE_1: return "I";
+    case DEGREE_2: return "II";
+    case DEGREE_3: return "III";
+    case DEGREE_4: return "IV";
+    case DEGREE_5: return "V";
+    case DEGREE_6: return "VI";
+    case DEGREE_7: return "VII";
+    default: return "--";
+  }
+}
+
+const char* chordQualityToString(uint16_t step) {
+  const ChordEvent* evt = chordTimeline.getEventStartingAtStep(step);
+  if (!evt) return "--";
+  switch (evt->quality) {
+    case QUALITY_AUTO: return "AUTO";
+    case MAJ: return "MAJ";
+    case MIN: return "MIN";
+    case DIM: return "DIM";
+    case AUG: return "AUG";
+    case DOM7: return "DOM7";
+    case MIN7: return "MIN7";
+    case MAJ7: return "MAJ7";
+    default: return "--";
+  }
 }
 
 void MyU8G2_DisplayInterface::displaySequencerMode() {
@@ -170,6 +296,52 @@ void MyU8G2_DisplayInterface::displaySequencerMode() {
   display();
 }
 
+void MyU8G2_DisplayInterface::displayEncMode() {
+  fillRect(0, 17, 128, 47, BLACK);
+  setTextSize(1);
+  setTextColor(WHITE);
+
+  setCursor(0, 22);
+  print("ENC PRIMARY");
+  setCursor(80, 22);
+  print("Bank:");
+  print(bankEnc.getSelection() + 1);
+
+  setCursor(0, 32);
+  print("CC: 74 71 75 76 91 92 94  7");
+
+  setCursor(0, 42);
+  for (int i = 0; i < 8; i++) {
+    if (i > 0) print(" ");
+    print(lastEncoderValues[i]);
+  }
+
+  display();
+}
+
+void MyU8G2_DisplayInterface::displayEncExtendedMode() {
+  fillRect(0, 17, 128, 47, BLACK);
+  setTextSize(1);
+  setTextColor(WHITE);
+
+  setCursor(0, 22);
+  print("ENC EXTENDED");
+  setCursor(80, 22);
+  print("Bank:");
+  print(bankEnc.getSelection() + 1);
+
+  setCursor(0, 32);
+  print("CC: 16 17 18 19 80 81 82 83");
+
+  setCursor(0, 42);
+  for (int i = 0; i < 8; i++) {
+    if (i > 0) print(" ");
+    print(lastEncoderValues[i]);
+  }
+
+  display();
+}
+
 void MyU8G2_DisplayInterface::displayMessage(const char* message) {
   clear();
   setTextSize(2);
@@ -184,7 +356,7 @@ MyU8G2_DisplayInterface display = u8g2Display;
 // ===== EncoderDisplayElement =====
 
 void EncoderDisplayElement::draw() {
-  if (lastActiveMode != BANK_ENC) return;
+  if (currentBankMode != BANK_ENC) return;
 
   display.setTextColor(WHITE);
   display.setTextSize(1);
@@ -207,6 +379,12 @@ void EncoderDisplayElement::draw() {
 
     display.setCursor(x + 9, y + 12);
     display.print(val);
+
+    // Show CC number below value
+    display.setCursor(x + 9, y + 20);
+    uint8_t cc = (currentEncLayer == ENC_EXTENDED) ? encExtendedCC[i] : encPrimaryCC[i];
+    display.print("CC");
+    display.print(cc);
   }
 }
 

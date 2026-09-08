@@ -26,11 +26,11 @@ void BankLEDHandler::updateBankLEDs() {
   switch (currentBankMode) {
     case BANK_KEYS:
       if (bankKeys.getSelection() < 16)
-        leds[bankKeys.getSelection()] = CRGB::SeaGreen;
+        leds[bankKeys.getSelection()] = (currentKeyLayer == KEY_EXTENDED) ? CRGB::Green : CRGB::SeaGreen;
       break;
     case BANK_ENC:
       if (bankEnc.getSelection() < 16)
-        leds[bankEnc.getSelection()] = CRGB::Purple;
+        leds[bankEnc.getSelection()] = (currentEncLayer == ENC_EXTENDED) ? CRGB::White : CRGB::Purple;
       break;
     case BANK_SEQ:
       leds[SEQ_LED_INDEX] = CRGB::Blue;
@@ -56,7 +56,11 @@ void BankLEDHandler::enterBankMode(BankMode mode) {
   display.drawBackground();
 
   if (mode == BANK_KEYS) {
-    display.displayBankLabels();
+    if (currentKeyLayer == KEY_EXTENDED) display.displayKeyExtendedMode();
+    else display.displayKeyMode();
+  } else if (mode == BANK_ENC) {
+    if (currentEncLayer == ENC_EXTENDED) display.displayEncExtendedMode();
+    else display.displayEncMode();
   } else if (mode == BANK_SEQ) {
     display.displaySequencerMode();
   }
@@ -81,7 +85,6 @@ void BankLEDHandler::exitBankMode() {
 
   FastLED.show();
 
-  if (lastActiveMode != BANK_ENC && lastActiveMode != BANK_SEQ) {
-    display.displayNormalMode();
-  }
+  // Layers are reset by TouchHandler on mode exit
+  display.displayNormalMode();
 }

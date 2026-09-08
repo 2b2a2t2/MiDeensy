@@ -14,6 +14,11 @@
 #include "src/VoiceManager.h"
 #include "src/Quantizer.h"
 
+// Forward declarations
+void routeSeqEncoders(uint16_t currentValues[8]);
+void routeKeyPrimaryEncoders(uint16_t currentValues[8]);
+void routeKeyExtendedEncoders(uint16_t currentValues[8]);
+
 // ==================== MIDI ====================
 
 USBMIDI_Interface midi;
@@ -54,6 +59,9 @@ bool encoderMoved = false;
 uint16_t encoderBaseline[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 bool encoderPickedUp[8] = { false, false, false, false, false, false, false, false };
 
+// Current encoder values (updated each loop)
+uint16_t currentValues[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
 // SEQ contextual encoder parameters (struct defined in Globals.h)
 SeqEncoderParams seqParams = { 8, 0, 0, 0, 4, 64, 64, 64, 0, 100 };
 
@@ -92,14 +100,36 @@ void applyChordEvent(const ChordEvent& evt) {
 
 // ==================== ENCODERS ====================
 
-// Gate flag: encoders only send CC when this is true (BANK_ENC mode)
+// KEY/ENC layer state
+KeyLayer currentKeyLayer = KEY_PRIMARY;
+EncLayer currentEncLayer = ENC_PRIMARY;
+bool tempBankSelectActive = false;
+
+// KEY mode state
+uint16_t timelineWindowOffset = 0;
+uint16_t keyEditStep = 0;
+bool noteVsChord = false;
+uint8_t globalVelocity = 100;
+
+// CC maps per ENC layer
+constexpr uint8_t encPrimaryCC[8]   = {74, 71, 75, 76, 91, 92, 94, 7};
+constexpr uint8_t encExtendedCC[8]  = {16, 17, 18, 19, 80, 81, 82, 83};
+
+// Gate flag: CC only emitted in BANK_ENC mode (both layers)
 bool encoderCCGate = false;
 
-// Custom sender that wraps ContinuousCCSender with a gate flag
-struct GatedCCSender {
-  void send(uint8_t value, MIDIAddress address) {
-    if (encoderCCGate)
-      Control_Surface.sendControlChange(address, value);
+// Sender that routes CC based on current ENC layer
+struct ModeAwareCCSender {
+  uint8_t encoderIndex;
+  ModeAwareCCSender() : encoderIndex(0) {}
+  explicit ModeAwareCCSender(uint8_t idx) : encoderIndex(idx) {}
+
+  void send(uint16_t value, MIDIAddress address) {
+    if (currentBankMode != BANK_ENC) return;
+    uint8_t cc = (currentEncLayer == ENC_EXTENDED)
+        ? encExtendedCC[encoderIndex]
+        : encPrimaryCC[encoderIndex];
+    Control_Surface.sendControlChange({cc, address.getChannel(), address.getCableNumber()}, value);
   }
   constexpr static uint8_t precision() { return 7; }
 };
@@ -108,18 +138,18 @@ struct GatedCCSender {
 AHEncoder ahe0{40, 39}, ahe1{36, 35}, ahe2{34, 33}, ahe3{31, 32};
 AHEncoder ahe4{38, 37}, ahe5{26, 25}, ahe6{27, 28}, ahe7{29, 30};
 
-// Borrowed encoders: always track position, but CC output gated by encoderCCGate
+// Borrowed encoders: single set, CC emission gated by mode + layer
 cs::OutputBankConfig<BankType::ChangeChannel> encBankCfg{bankEnc, BankType::ChangeChannel};
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc0{ cs::Bankable::SingleAddress(encBankCfg, {74, Channel_1}), ahe0, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc1{ cs::Bankable::SingleAddress(encBankCfg, {71, Channel_1}), ahe1, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc2{ cs::Bankable::SingleAddress(encBankCfg, {75, Channel_1}), ahe2, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc3{ cs::Bankable::SingleAddress(encBankCfg, {76, Channel_1}), ahe3, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc4{ cs::Bankable::SingleAddress(encBankCfg, {91, Channel_1}), ahe4, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc5{ cs::Bankable::SingleAddress(encBankCfg, {92, Channel_1}), ahe5, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc6{ cs::Bankable::SingleAddress(encBankCfg, {94, Channel_1}), ahe6, 7, 4, {} };
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender> midiEnc7{ cs::Bankable::SingleAddress(encBankCfg, {7, Channel_1}), ahe7, 7, 4, {} };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc0{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe0, 7, 4, ModeAwareCCSender(0) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc1{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe1, 7, 4, ModeAwareCCSender(1) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc2{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe2, 7, 4, ModeAwareCCSender(2) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc3{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe3, 7, 4, ModeAwareCCSender(3) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc4{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe4, 7, 4, ModeAwareCCSender(4) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc5{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe5, 7, 4, ModeAwareCCSender(5) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc6{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe6, 7, 4, ModeAwareCCSender(6) };
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender> midiEnc7{ cs::Bankable::SingleAddress(encBankCfg, {0, Channel_1}), ahe7, 7, 4, ModeAwareCCSender(7) };
 
-cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, GatedCCSender>* midiEncoders[8] = {
+cs::Bankable::BorrowedMIDIAbsoluteEncoder<16, cs::Bankable::SingleAddress, ModeAwareCCSender>* midiEncoders[8] = {
   &midiEnc0, &midiEnc1, &midiEnc2, &midiEnc3,
   &midiEnc4, &midiEnc5, &midiEnc6, &midiEnc7
 };
@@ -261,104 +291,45 @@ void loop() {
     lastSeqFunction = SEQ_NONE;
   }
 
-  // Context-sensitive encoder routing in BANK_SEQ
+  // Capture baseline when entering/switching KEY layer
+  static KeyLayer lastKeyLayer = KEY_PRIMARY;
+  if (currentBankMode == BANK_KEYS && currentKeyLayer != lastKeyLayer) {
+    for (int i = 0; i < 8; i++) {
+      encoderBaseline[i] = currentValues[i];
+      encoderPickedUp[i] = false;
+    }
+    lastKeyLayer = currentKeyLayer;
+  }
+  if (currentBankMode != BANK_KEYS) {
+    lastKeyLayer = KEY_PRIMARY;
+  }
+
+  // Capture baseline when entering/switching ENC layer
+  static EncLayer lastEncLayer = ENC_PRIMARY;
+  if (currentBankMode == BANK_ENC && currentEncLayer != lastEncLayer) {
+    for (int i = 0; i < 8; i++) {
+      encoderBaseline[i] = currentValues[i];
+      encoderPickedUp[i] = false;
+    }
+    lastEncLayer = currentEncLayer;
+  }
+  if (currentBankMode != BANK_ENC) {
+    lastEncLayer = ENC_PRIMARY;
+  }
+
+  // Context-sensitive encoder routing
   if (currentBankMode == BANK_SEQ) {
-    uint8_t selStep = sequencer.getSelectedStep();
-
-    switch (seqFunction) {
-      case SEQ_HARMONY: {
-        // enc0 → duration, enc1 → inversion, enc2 → tension, enc3 → extensions
-        // These modify the ChordEvent whose startStep == selectedStep
-        bool changed = false;
-        ChordEvent evt = getOrCreateEventStartingAtStep(selStep);
-
-        if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
-          encoderPickedUp[0] = true;
-          uint8_t newDur = map(currentValues[0], 0, 127, 1, 16);
-          if (evt.duration != newDur) { evt.duration = newDur; changed = true; }
-        }
-        if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
-          encoderPickedUp[1] = true;
-          uint8_t newInv = map(currentValues[1], 0, 127, 0, 2);
-          if (evt.inversion != newInv) { evt.inversion = newInv; changed = true; }
-        }
-        if (encoderPickedUp[2] || currentValues[2] != encoderBaseline[2]) {
-          encoderPickedUp[2] = true;
-          if (evt.tension != currentValues[2]) { evt.tension = currentValues[2]; changed = true; }
-        }
-        if (encoderPickedUp[3] || currentValues[3] != encoderBaseline[3]) {
-          encoderPickedUp[3] = true;
-          uint8_t newExt = map(currentValues[3], 0, 127, 0, 15);
-          if (evt.extensions != newExt) { evt.extensions = newExt; changed = true; }
-        }
-
-        if (changed) {
-          applyChordEvent(evt);
-          seqParams.duration = evt.duration;
-          seqParams.inversion = evt.inversion;
-          seqParams.tension = evt.tension;
-          seqParams.extensions = evt.extensions;
-        }
-        break;
-      }
-
-      case SEQ_RHYTHM:
-        // enc0 → density (global generation parameter)
-        if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
-          encoderPickedUp[0] = true;
-          seqParams.density = map(currentValues[0], 0, 127, 1, 16);
-        }
-        // enc1 → swing (stored for future rhythm engine)
-        if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
-          encoderPickedUp[1] = true;
-          seqParams.swing = currentValues[1];
-        }
-        break;
-
-      case SEQ_THEME:
-        // enc0 → energy, enc1 → themeTension (feed into HarmonyParams for NEW/EVOLVE)
-        if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
-          encoderPickedUp[0] = true;
-          seqParams.energy = currentValues[0];
-        }
-        if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
-          encoderPickedUp[1] = true;
-          seqParams.themeTension = currentValues[1];
-        }
-        break;
-
-      case SEQ_VOICE: {
-        // enc0 → octave offset, enc1 → velocity (per-slot via VoiceManager)
-        bool changed = false;
-        if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
-          encoderPickedUp[0] = true;
-          int8_t newOct = map(currentValues[0], 0, 127, -12, 12);
-          if (seqParams.octaveOffset != newOct) {
-            seqParams.octaveOffset = newOct;
-            voiceManager.setSlotOctaveOffset(selectedSlot, newOct);
-            changed = true;
-          }
-        }
-        if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
-          encoderPickedUp[1] = true;
-          if (seqParams.velocity != currentValues[1]) {
-            seqParams.velocity = currentValues[1];
-            voiceManager.setSlotVelocity(selectedSlot, currentValues[1]);
-            changed = true;
-          }
-        }
-        (void)changed;
-        break;
-      }
-
-      case SEQ_NONE:
-      default:
-        break;
+    routeSeqEncoders(currentValues);
+  } else if (currentBankMode == BANK_KEYS) {
+    if (currentKeyLayer == KEY_PRIMARY) {
+      routeKeyPrimaryEncoders(currentValues);
+    } else {
+      routeKeyExtendedEncoders(currentValues);
     }
   }
 
-  // Encoder 1 controls keyboard octave (only in KEY mode, not SEQ or ENC)
-  if (currentBankMode != BANK_SEQ && currentBankMode != BANK_ENC) {
+  // Encoder 1 controls keyboard octave (only in BANK_NONE)
+  if (currentBankMode == BANK_NONE) {
     int8_t newOctave = map(midiEncoders[1]->getValue(), 0, 127, 0, 7);
     if (!encoderMoved) {
       if (midiEncoders[1]->getValue() != initialEnc1Value) {
@@ -418,4 +389,232 @@ void loop() {
     FastLED.show();
     midiled.clearDirty();
   }
+}
+
+// ==================== ENCODER ROUTING FUNCTIONS ====================
+
+void routeSeqEncoders(uint16_t currentValues[8]) {
+  uint8_t selStep = sequencer.getSelectedStep();
+
+  switch (seqFunction) {
+    case SEQ_HARMONY: {
+      bool changed = false;
+      ChordEvent evt = getOrCreateEventStartingAtStep(selStep);
+
+      if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
+        encoderPickedUp[0] = true;
+        uint8_t newDur = map(currentValues[0], 0, 127, 1, 16);
+        if (evt.duration != newDur) { evt.duration = newDur; changed = true; }
+      }
+      if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
+        encoderPickedUp[1] = true;
+        uint8_t newInv = map(currentValues[1], 0, 127, 0, 2);
+        if (evt.inversion != newInv) { evt.inversion = newInv; changed = true; }
+      }
+      if (encoderPickedUp[2] || currentValues[2] != encoderBaseline[2]) {
+        encoderPickedUp[2] = true;
+        if (evt.tension != currentValues[2]) { evt.tension = currentValues[2]; changed = true; }
+      }
+      if (encoderPickedUp[3] || currentValues[3] != encoderBaseline[3]) {
+        encoderPickedUp[3] = true;
+        uint8_t newExt = map(currentValues[3], 0, 127, 0, 15);
+        if (evt.extensions != newExt) { evt.extensions = newExt; changed = true; }
+      }
+
+      if (changed) {
+        applyChordEvent(evt);
+        seqParams.duration = evt.duration;
+        seqParams.inversion = evt.inversion;
+        seqParams.tension = evt.tension;
+        seqParams.extensions = evt.extensions;
+      }
+      break;
+    }
+
+    case SEQ_RHYTHM: {
+      if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
+        encoderPickedUp[0] = true;
+        seqParams.density = map(currentValues[0], 0, 127, 1, 16);
+      }
+      if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
+        encoderPickedUp[1] = true;
+        seqParams.swing = currentValues[1];
+      }
+      break;
+    }
+
+    case SEQ_THEME: {
+      if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
+        encoderPickedUp[0] = true;
+        seqParams.energy = currentValues[0];
+      }
+      if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
+        encoderPickedUp[1] = true;
+        seqParams.themeTension = currentValues[1];
+      }
+      break;
+    }
+
+    case SEQ_VOICE: {
+      bool changed = false;
+      if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
+        encoderPickedUp[0] = true;
+        int8_t newOct = map(currentValues[0], 0, 127, -12, 12);
+        if (seqParams.octaveOffset != newOct) {
+          seqParams.octaveOffset = newOct;
+          voiceManager.setSlotOctaveOffset(selectedSlot, newOct);
+          changed = true;
+        }
+      }
+      if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
+        encoderPickedUp[1] = true;
+        if (seqParams.velocity != currentValues[1]) {
+          seqParams.velocity = currentValues[1];
+          voiceManager.setSlotVelocity(selectedSlot, currentValues[1]);
+          changed = true;
+        }
+      }
+      (void)changed;
+      break;
+    }
+
+    case SEQ_NONE:
+    default: {
+      break;
+    }
+  }
+}
+
+void routeKeyPrimaryEncoders(uint16_t currentValues[8]) {
+  // ENC0 → currentKey (0-11)
+  if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
+    encoderPickedUp[0] = true;
+    uint8_t newKey = map(currentValues[0], 0, 127, 0, 11);
+    if (currentKey != newKey) {
+      currentKey = newKey;
+      quantizer.queueKeyChange(currentKey, currentScale);
+    }
+  }
+
+  // ENC1 → currentScale (0-6)
+  if (encoderPickedUp[1] || currentValues[1] != encoderBaseline[1]) {
+    encoderPickedUp[1] = true;
+    uint8_t newScale = map(currentValues[1], 0, 127, 0, SCALE_COUNT - 1);
+    if (currentScale != newScale) {
+      currentScale = (ScaleType)newScale;
+      quantizer.queueKeyChange(currentKey, currentScale);
+    }
+  }
+
+  // ENC2 → ChordEvent.degree at keyEditStep
+  if (encoderPickedUp[2] || currentValues[2] != encoderBaseline[2]) {
+    encoderPickedUp[2] = true;
+    uint8_t newDegree = map(currentValues[2], 0, 127, 0, 6);
+    const ChordEvent* evt = chordTimeline.getEventStartingAtStep(keyEditStep);
+    if (evt) {
+      ChordEvent modified = *evt;
+      modified.degree = (ScaleDegree)newDegree;
+      chordTimeline.updateEvent(keyEditStep, modified);
+    } else {
+      ChordEvent newEvt = getOrCreateEventStartingAtStep(keyEditStep);
+      newEvt.degree = (ScaleDegree)newDegree;
+      applyChordEvent(newEvt);
+    }
+  }
+
+  // ENC3 → noteVsChord (0/1)
+  if (encoderPickedUp[3] || currentValues[3] != encoderBaseline[3]) {
+    encoderPickedUp[3] = true;
+    noteVsChord = (currentValues[3] >= 64);
+  }
+
+  // ENC4 → globalVelocity (0-127)
+  if (encoderPickedUp[4] || currentValues[4] != encoderBaseline[4]) {
+    encoderPickedUp[4] = true;
+    globalVelocity = currentValues[4];
+  }
+
+  // ENC5 → selected slot octave offset (-12 to +12)
+  if (encoderPickedUp[5] || currentValues[5] != encoderBaseline[5]) {
+    encoderPickedUp[5] = true;
+    int8_t newOct = map(currentValues[5], 0, 127, -12, 12);
+    voiceManager.setSlotOctaveOffset(selectedSlot, newOct);
+  }
+
+  // ENC6 → ChordEvent.quality/extensions at keyEditStep
+  if (encoderPickedUp[6] || currentValues[6] != encoderBaseline[6]) {
+    encoderPickedUp[6] = true;
+    uint8_t q = map(currentValues[6], 0, 127, 0, 7);  // 0=QUALITY_AUTO..7=MAJ7
+    const ChordEvent* evt = chordTimeline.getEventStartingAtStep(keyEditStep);
+    if (evt) {
+      ChordEvent modified = *evt;
+      if (q == 0) {
+        modified.quality = QUALITY_AUTO;
+        modified.extensions = 0;
+      } else {
+        modified.quality = (ChordQuality)q;
+        // Set extensions based on quality
+        switch (modified.quality) {
+          case DOM7: modified.extensions = 0x01; break;  // b7
+          case MIN7: modified.extensions = 0x01; break;  // b7
+          case MAJ7: modified.extensions = 0x08; break;  // 13 (maj7 implies 7)
+          default: modified.extensions = 0; break;
+        }
+      }
+      chordTimeline.updateEvent(keyEditStep, modified);
+    } else {
+      ChordEvent newEvt = getOrCreateEventStartingAtStep(keyEditStep);
+      newEvt.quality = (q == 0) ? QUALITY_AUTO : (ChordQuality)q;
+      applyChordEvent(newEvt);
+    }
+  }
+
+  // ENC7 → selectedSlot (0-15)
+  if (encoderPickedUp[7] || currentValues[7] != encoderBaseline[7]) {
+    encoderPickedUp[7] = true;
+    uint8_t newSlot = map(currentValues[7], 0, 127, 0, 15);
+    if (selectedSlot != newSlot) {
+      selectedSlot = newSlot;
+      voiceManager.setActiveSlot(selectedSlot);
+    }
+  }
+}
+
+void routeKeyExtendedEncoders(uint16_t currentValues[8]) {
+  // ENC0 → keyboardOctave (0-7)
+  if (encoderPickedUp[0] || currentValues[0] != encoderBaseline[0]) {
+    encoderPickedUp[0] = true;
+    int8_t newOctave = map(currentValues[0], 0, 127, 0, 7);
+    if (keyboardOctave != newOctave) {
+      retriggerHeldNotes(newOctave);
+      keyboardOctave = newOctave;
+    }
+  }
+
+  // ENC1 → unused
+
+  // ENC2 → selected slot octave offset (read-only display context)
+  // No action - display only
+
+  // ENC3 → selected slot velocity (read-only display context)
+  // No action - display only
+
+  // ENC4 → chordTimeline loopLength (1-256)
+  if (encoderPickedUp[4] || currentValues[4] != encoderBaseline[4]) {
+    encoderPickedUp[4] = true;
+    uint16_t newLen = map(currentValues[4], 0, 127, 1, 256);
+    chordTimeline.setLoopLength(newLen);
+  }
+
+  // ENC5 → selectedSlot (0-15)
+  if (encoderPickedUp[5] || currentValues[5] != encoderBaseline[5]) {
+    encoderPickedUp[5] = true;
+    uint8_t newSlot = map(currentValues[5], 0, 127, 0, 15);
+    if (selectedSlot != newSlot) {
+      selectedSlot = newSlot;
+      voiceManager.setActiveSlot(selectedSlot);
+    }
+  }
+
+  // ENC6, ENC7 → unused
 }

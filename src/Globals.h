@@ -27,6 +27,18 @@ enum BankMode {
   BANK_SEQ
 };
 
+// KEY layer (sticky mode sub-state)
+enum KeyLayer {
+  KEY_PRIMARY,
+  KEY_EXTENDED
+};
+
+// ENC layer (sticky mode sub-state)
+enum EncLayer {
+  ENC_PRIMARY,
+  ENC_EXTENDED
+};
+
 // SEQ function layers (F1-F4 in SEQ mode)
 enum SeqFunction {
   SEQ_NONE,       // no function selected (default on entering SEQ)
@@ -108,6 +120,7 @@ extern BankMode currentBankMode;
 extern BankMode lastActiveMode;
 extern bool modeButtonHeld;
 extern uint16_t lastEncoderValues[8];
+extern uint16_t currentValues[8];
 extern Array<CRGB, NUM_LEDS> leds;
 extern const byte ledMapping[NUM_LEDS];
 extern int8_t keyboardOctave;
@@ -118,6 +131,21 @@ extern uint8_t selectedSlot;
 extern SeqFunction seqFunction;
 extern uint8_t currentKey;       // root MIDI note (0-11), default 60 (C)
 extern ScaleType currentScale;   // current scale type, default MAJOR
+
+// KEY/ENC layer state
+extern KeyLayer currentKeyLayer;
+extern EncLayer currentEncLayer;
+extern bool tempBankSelectActive;
+
+// KEY mode state
+extern uint16_t timelineWindowOffset;
+extern uint16_t keyEditStep;
+extern bool noteVsChord;
+extern uint8_t globalVelocity;
+
+// ENC CC maps (defined in MiDeensy.ino)
+extern const uint8_t encPrimaryCC[8];
+extern const uint8_t encExtendedCC[8];
 
 // SEQ encoder parameters (updated by encoders, consumed by generation/playback)
 struct SeqEncoderParams {

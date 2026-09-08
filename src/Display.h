@@ -18,6 +18,10 @@ public:
   void displayBankLabels();
   void displayNormalMode();
   void displaySequencerMode();
+  void displayKeyMode();
+  void displayKeyExtendedMode();
+  void displayEncMode();
+  void displayEncExtendedMode();
   void displayMessage(const char* message);
 };
 

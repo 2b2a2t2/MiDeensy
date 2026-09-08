@@ -4,6 +4,7 @@
 #include "HarmonyEngine.h"
 #include "ChordTimeline.h"
 #include "VoiceManager.h"
+#include "Display.h"
 
 extern uint8_t selectedSlot;
 extern SeqFunction seqFunction;
@@ -12,6 +13,14 @@ extern ScaleType currentScale;
 extern ChordTimeline chordTimeline;
 extern VoiceManager voiceManager;
 extern struct SeqEncoderParams seqParams;
+extern KeyLayer currentKeyLayer;
+extern EncLayer currentEncLayer;
+extern bool tempBankSelectActive;
+extern uint16_t timelineWindowOffset;
+extern uint16_t keyEditStep;
+extern bool noteVsChord;
+extern uint8_t globalVelocity;
+extern MyU8G2_DisplayInterface display;
 
 // 16 PADS
 ButtonMap padButtons[] = {
@@ -69,6 +78,18 @@ ButtonMap keyboardButtons[] = {
   { 2, 8, "KEY_B", TYPE_KEYBOARD, 95, false, 0, false }
 };
 const int NUM_KEYS = sizeof(keyboardButtons) / sizeof(keyboardButtons[0]);
+
+struct ModeButtonState {
+  bool pressed = false;
+  unsigned long pressTime = 0;
+  bool longPressFired = false;
+  bool inTempBankSelect = false;
+  KeyLayer savedKeyLayer = KEY_PRIMARY;
+  EncLayer savedEncLayer = ENC_PRIMARY;
+};
+
+ModeButtonState keyButtonState;
+ModeButtonState encButtonState;
 
 ButtonMap* findButton(uint8_t sensor, uint8_t channel) {
   for (int i = 0; i < NUM_PADS; i++) {
@@ -139,6 +160,19 @@ static void handlePadButton(ButtonMap* button, bool pressed) {
         bankEnc.select(padIndex);
       }
       BankLEDHandler::updateBankLEDs();
+    } else if (currentBankMode == BANK_KEYS) {
+      // KEY mode: pad selects chord event to edit
+      int padIndex = button->midiNote - PAD_NOTE_BASE;
+      keyEditStep = timelineWindowOffset + padIndex;
+      // Reset encoder pickup for chord edit
+      extern uint16_t encoderBaseline[8];
+      extern bool encoderPickedUp[8];
+      extern uint16_t currentValues[8];
+      for (int i = 0; i < 8; i++) {
+        encoderBaseline[i] = currentValues[i];
+        encoderPickedUp[i] = false;
+      }
+      display.drawBackground();
     }
   } else {
     Serial.print(button->name);
@@ -173,9 +207,40 @@ static void handleControlButton(ButtonMap* button, bool pressed) {
     Serial.println(" pressed");
 
     if (strcmp(button->name, "ENC") == 0) {
-      BankLEDHandler::enterBankMode(BANK_ENC);
+      ModeButtonState& state = encButtonState;
+      state.pressed = true;
+      state.pressTime = millis();
+      state.longPressFired = false;
+      state.inTempBankSelect = false;
+
+      if (currentBankMode == BANK_NONE) {
+        // From NONE: enter ENC_PRIMARY
+        currentEncLayer = ENC_PRIMARY;
+        BankLEDHandler::enterBankMode(BANK_ENC);
+      } else if (currentBankMode == BANK_ENC && !tempBankSelectActive) {
+        // Already in ENC mode, not in temp bank select: toggle layer
+        currentEncLayer = (currentEncLayer == ENC_PRIMARY) ? ENC_EXTENDED : ENC_PRIMARY;
+        BankLEDHandler::updateBankLEDs();
+        display.drawBackground();
+      }
+      // If in temp bank select, press is ignored (will be handled on release)
     } else if (strcmp(button->name, "KEY") == 0) {
-      BankLEDHandler::enterBankMode(BANK_KEYS);
+      ModeButtonState& state = keyButtonState;
+      state.pressed = true;
+      state.pressTime = millis();
+      state.longPressFired = false;
+      state.inTempBankSelect = false;
+
+      if (currentBankMode == BANK_NONE) {
+        // From NONE: enter KEY_PRIMARY
+        currentKeyLayer = KEY_PRIMARY;
+        BankLEDHandler::enterBankMode(BANK_KEYS);
+      } else if (currentBankMode == BANK_KEYS && !tempBankSelectActive) {
+        // Already in KEY mode, not in temp bank select: toggle layer
+        currentKeyLayer = (currentKeyLayer == KEY_PRIMARY) ? KEY_EXTENDED : KEY_PRIMARY;
+        BankLEDHandler::updateBankLEDs();
+        display.drawBackground();
+      }
     } else if (strcmp(button->name, "SEQ") == 0) {
       if (currentBankMode == BANK_SEQ) {
         BankLEDHandler::exitBankMode();
@@ -246,6 +311,19 @@ static void handleControlButton(ButtonMap* button, bool pressed) {
         Serial.println(seqFunction);
         // TODO Phase 6: toggle lock for current context
       }
+    } else if (currentBankMode == BANK_KEYS) {
+      // PREV/NEXT in KEY mode: timeline window navigation
+      if (strcmp(button->name, "PREV") == 0) {
+        if (timelineWindowOffset >= 16) {
+          timelineWindowOffset -= 16;
+          display.drawBackground();
+        }
+      } else if (strcmp(button->name, "NEXT") == 0) {
+        if (timelineWindowOffset < 240) {
+          timelineWindowOffset += 16;
+          display.drawBackground();
+        }
+      }
     } else {
       if (currentBankMode == BANK_NONE) {
         Control_Surface.sendNoteOn({button->midiNote, Channel_1}, 127);
@@ -259,8 +337,34 @@ static void handleControlButton(ButtonMap* button, bool pressed) {
       Control_Surface.sendNoteOff({button->midiNote, Channel_1}, 0);
     }
 
+    // Handle KEY/ENC release
+    if (strcmp(button->name, "ENC") == 0) {
+      ModeButtonState& state = encButtonState;
+      if (state.inTempBankSelect) {
+        // Was in temp bank select: exit, restore layer
+        state.inTempBankSelect = false;
+        modeButtonHeld = false;
+        currentEncLayer = state.savedEncLayer;
+        BankLEDHandler::updateBankLEDs();
+        display.drawBackground();
+      }
+      state.pressed = false;
+    } else if (strcmp(button->name, "KEY") == 0) {
+      ModeButtonState& state = keyButtonState;
+      if (state.inTempBankSelect) {
+        // Was in temp bank select: exit, restore layer
+        state.inTempBankSelect = false;
+        modeButtonHeld = false;
+        currentKeyLayer = state.savedKeyLayer;
+        BankLEDHandler::updateBankLEDs();
+        display.drawBackground();
+      }
+      state.pressed = false;
+    }
+
     // Mode buttons: only exit if NOT in SEQ mode (SEQ is sticky)
-    if (button->isModeButton && strcmp(button->name, "SEQ") != 0) {
+    // and not in temp bank select
+    if (button->isModeButton && strcmp(button->name, "SEQ") != 0 && !tempBankSelectActive) {
       modeButtonHeld = false;
       for (int i = 0; i < NUM_CONTROLS; i++) {
         if (controlButtons[i].isModeButton && strcmp(controlButtons[i].name, "SEQ") != 0 && controlButtons[i].isPressed) {
@@ -270,6 +374,8 @@ static void handleControlButton(ButtonMap* button, bool pressed) {
       }
       if (!modeButtonHeld) {
         BankLEDHandler::exitBankMode();
+        currentKeyLayer = KEY_PRIMARY;
+        currentEncLayer = ENC_PRIMARY;
       }
     }
   }
@@ -313,7 +419,34 @@ static void handleKeyboardButton(ButtonMap* button, bool pressed) {
     Serial.print(button->name);
     Serial.print(" pressed octave=");
     Serial.println(keyboardOctave);
-    Control_Surface.sendNoteOn({note, channel}, 100);
+
+    if (noteVsChord) {
+      // Play chord based on currentKey, currentScale, and keyEditStep (or default)
+      const ChordEvent* evt = chordTimeline.getEventStartingAtStep(keyEditStep);
+      ChordEvent chordEvt;
+      if (evt) {
+        chordEvt = *evt;
+      } else {
+        // Default: degree I, auto quality
+        chordEvt.active = true;
+        chordEvt.degree = DEGREE_1;
+        chordEvt.quality = QUALITY_AUTO;
+        chordEvt.inversion = 0;
+        chordEvt.extensions = 0;
+      }
+      ResolvedChord rc = chordTimeline.resolve(chordEvt, currentKey, currentScale);
+      if (rc.active) {
+        uint8_t rootNote = rc.primaryNote;
+        for (uint8_t i = 0; i < 12; i++) {
+          if (rc.chordMask & (1 << i)) {
+            Control_Surface.sendNoteOn({rootNote + i, channel}, globalVelocity);
+          }
+        }
+      }
+    } else {
+      Control_Surface.sendNoteOn({note, channel}, globalVelocity);
+    }
+
     if (currentBankMode == BANK_SEQ) {
       sequencer.setLastNote(note);
     }
@@ -322,7 +455,31 @@ static void handleKeyboardButton(ButtonMap* button, bool pressed) {
 
     Serial.print(button->name);
     Serial.println(" released");
-    Control_Surface.sendNoteOff({note, channel}, 0);
+
+    if (noteVsChord) {
+      const ChordEvent* evt = chordTimeline.getEventStartingAtStep(keyEditStep);
+      ChordEvent chordEvt;
+      if (evt) {
+        chordEvt = *evt;
+      } else {
+        chordEvt.active = true;
+        chordEvt.degree = DEGREE_1;
+        chordEvt.quality = QUALITY_AUTO;
+        chordEvt.inversion = 0;
+        chordEvt.extensions = 0;
+      }
+      ResolvedChord rc = chordTimeline.resolve(chordEvt, currentKey, currentScale);
+      if (rc.active) {
+        uint8_t rootNote = rc.primaryNote;
+        for (uint8_t i = 0; i < 12; i++) {
+          if (rc.chordMask & (1 << i)) {
+            Control_Surface.sendNoteOff({rootNote + i, channel}, 0);
+          }
+        }
+      }
+    } else {
+      Control_Surface.sendNoteOff({note, channel}, 0);
+    }
   }
 }
 
@@ -369,7 +526,31 @@ void handleGestureEvent(uint8_t sensorIndex, uint8_t channel, const char* gestur
   } else if (strcmp(gestureName, "long_press") == 0) {
     Serial.print(button->name);
     Serial.println(" long_press");
-    if (button->type == TYPE_PAD && currentBankMode == BANK_NONE) {
+
+    // KEY/ENC long press: enter temporary bank selection
+    if (strcmp(button->name, "ENC") == 0 && (currentBankMode == BANK_ENC || currentBankMode == BANK_NONE)) {
+      ModeButtonState& state = encButtonState;
+      if (state.pressed && !state.longPressFired) {
+        state.longPressFired = true;
+        state.inTempBankSelect = true;
+        state.savedEncLayer = currentEncLayer;
+        modeButtonHeld = true;
+        tempBankSelectActive = true;
+        BankLEDHandler::enterBankMode(BANK_ENC);
+        display.displayBankLabels();
+      }
+    } else if (strcmp(button->name, "KEY") == 0 && (currentBankMode == BANK_KEYS || currentBankMode == BANK_NONE)) {
+      ModeButtonState& state = keyButtonState;
+      if (state.pressed && !state.longPressFired) {
+        state.longPressFired = true;
+        state.inTempBankSelect = true;
+        state.savedKeyLayer = currentKeyLayer;
+        modeButtonHeld = true;
+        tempBankSelectActive = true;
+        BankLEDHandler::enterBankMode(BANK_KEYS);
+        display.displayBankLabels();
+      }
+    } else if (button->type == TYPE_PAD && currentBankMode == BANK_NONE) {
       Control_Surface.sendControlChange({button->midiNote, Channel_1}, 127);
     }
   }

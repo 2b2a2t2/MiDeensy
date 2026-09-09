@@ -6,96 +6,13 @@
 #define BLACK 0
 #define WHITE 1
 
-// LED hardware config
 constexpr uint8_t LED_PIN = 6;
 constexpr uint8_t NUM_LEDS = 42;
 
-// Pad MIDI notes (Channel 1)
 constexpr uint8_t PAD_NOTE_BASE = 59;
-
-// Keyboard MIDI notes (Channel 2+bank)
 constexpr uint8_t KEY_NOTE_BASE = 84;
-
-// Control button MIDI notes
 constexpr uint8_t CTRL_NOTE_BASE = 75;
 
-// Bank modes
-enum BankMode {
-  BANK_NONE,
-  BANK_KEYS,
-  BANK_ENC,
-  BANK_SEQ
-};
-
-// KEY layer (sticky mode sub-state)
-enum KeyLayer {
-  KEY_PRIMARY,
-  KEY_EXTENDED
-};
-
-// ENC layer (sticky mode sub-state)
-enum EncLayer {
-  ENC_PRIMARY,
-  ENC_EXTENDED
-};
-
-// SEQ function layers (F1-F4 in SEQ mode)
-enum SeqFunction {
-  SEQ_NONE,       // no function selected (default on entering SEQ)
-  SEQ_THEME,      // F1: theme parameters (energy, tension)
-  SEQ_HARMONY,    // F2: chord progression editing
-  SEQ_RHYTHM,     // F3: rhythm generation
-  SEQ_VOICE       // F4: voice configuration
-};
-
-// Voice roles for SEQ slots
-enum VoiceRole : uint8_t {
-  ROLE_NONE = 0,
-  ROLE_DRUMS,
-  ROLE_BASS,
-  ROLE_PAD,
-  ROLE_ARP,
-  ROLE_LEAD
-};
-
-// Scale types for harmony engine
-enum ScaleType : uint8_t {
-  SCALE_MAJOR = 0,
-  SCALE_MINOR,        // natural minor (Aeolian)
-  SCALE_DORIAN,
-  SCALE_MIXOLYDIAN,
-  SCALE_HARMONIC_MINOR,
-  SCALE_MELODIC_MINOR,
-  SCALE_COUNT
-};
-
-// Intervals for each scale type (semitones from root, 7 notes)
-constexpr uint8_t SCALE_INTERVALS[SCALE_COUNT][7] = {
-  { 0, 2, 4, 5, 7, 9, 11 },  // MAJOR
-  { 0, 2, 3, 5, 7, 8, 10 },  // MINOR (natural)
-  { 0, 2, 3, 5, 7, 9, 10 },  // DORIAN
-  { 0, 2, 4, 5, 7, 9, 10 },  // MIXOLYDIAN
-  { 0, 2, 3, 5, 7, 8, 11 },  // HARMONIC MINOR
-  { 0, 2, 3, 5, 7, 9, 11 },  // MELODIC MINOR
-};
-
-// Default chord quality for each scale degree (index 0-6)
-// 0=MAJ, 1=MIN, 2=DIM, 3=AUG, 4=DOM7, 5=MIN7, 6=MAJ7
-enum ChordQuality : uint8_t {
-  QUALITY_AUTO = 0,
-  MAJ, MIN, DIM, AUG, DOM7, MIN7, MAJ7
-};
-
-constexpr uint8_t DEFAULT_CHORD_QUALITY[SCALE_COUNT][7] = {
-  { MAJ, MIN, MIN, MAJ, MAJ, MIN, DIM },  // MAJOR: I ii iii IV V vi vii°
-  { MIN, DIM, MAJ, MIN, MIN, MAJ, MAJ },  // MINOR: i ii° III iv v VI VII
-  { MIN, MIN, MAJ, MAJ, MIN, DIM, MAJ },  // DORIAN
-  { MAJ, MIN, DIM, MAJ, MIN, MIN, MAJ },  // MIXOLYDIAN
-  { MIN, DIM, AUG, MIN, MAJ, MAJ, DIM },  // HARMONIC MINOR
-  { MIN, MIN, AUG, MAJ, MAJ, DIM, DIM },  // MELODIC MINOR
-};
-
-// Button types
 enum ButtonType {
   TYPE_PAD,
   TYPE_CONTROL,
@@ -108,55 +25,8 @@ struct ButtonMap {
   const char* name;
   ButtonType type;
   uint8_t midiNote;
+  uint8_t ledIndex;
   bool isPressed;
   unsigned long pressTime;
   bool isModeButton;
-};
-
-// Extern globals
-extern Bank<16> bankKeys;
-extern Bank<16> bankEnc;
-extern BankMode currentBankMode;
-extern BankMode lastActiveMode;
-extern bool modeButtonHeld;
-extern uint16_t lastEncoderValues[8];
-extern uint16_t currentValues[8];
-extern Array<CRGB, NUM_LEDS> leds;
-extern const byte ledMapping[NUM_LEDS];
-extern int8_t keyboardOctave;
-extern bool seqLEDsActive;
-extern uint16_t lastHeldChord;
-extern uint16_t lastChord;
-extern uint8_t selectedSlot;
-extern SeqFunction seqFunction;
-extern uint8_t currentKey;       // root MIDI note (0-11), default 60 (C)
-extern ScaleType currentScale;   // current scale type, default MAJOR
-
-// KEY/ENC layer state
-extern KeyLayer currentKeyLayer;
-extern EncLayer currentEncLayer;
-extern bool tempBankSelectActive;
-
-// KEY mode state
-extern uint16_t timelineWindowOffset;
-extern uint16_t keyEditStep;
-extern bool noteVsChord;
-extern uint8_t globalVelocity;
-
-// ENC CC maps (defined in MiDeensy.ino)
-extern const uint8_t encPrimaryCC[8];
-extern const uint8_t encExtendedCC[8];
-
-// SEQ encoder parameters (updated by encoders, consumed by generation/playback)
-struct SeqEncoderParams {
-  uint8_t duration;      // enc0: 1-16 steps
-  uint8_t inversion;     // enc1: 0-2
-  uint8_t tension;       // enc2: 0-127
-  uint8_t extensions;    // enc3: bitmask
-  uint8_t density;       // enc0 (RHYTHM): chords per loop
-  uint8_t swing;         // enc1 (RHYTHM): 0-127
-  uint8_t energy;        // enc0 (THEME): 0-127
-  uint8_t themeTension;  // enc1 (THEME): 0-127
-  int8_t octaveOffset;   // enc0 (VOICE): -12 to +12 semitones
-  uint8_t velocity;      // enc1 (VOICE): 0-127
 };
